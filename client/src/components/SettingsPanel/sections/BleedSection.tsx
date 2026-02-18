@@ -16,6 +16,20 @@ export function BleedSection() {
     const setBleedEdge = useSettingsStore((state) => state.setBleedEdge);
     const setBleedEdgeUnit = useSettingsStore((state) => state.setBleedEdgeUnit);
 
+    const trimEdgeWidth = useSettingsStore((state) => state.trimEdgeWidth);
+    const trimEdge = useSettingsStore((state) => state.trimEdge);
+    const trimEdgeUnit = useSettingsStore((state) => state.trimEdgeUnit);
+    const setTrimEdgeWidth = useSettingsStore((state) => state.setTrimEdgeWidth);
+    const setTrimEdge = useSettingsStore((state) => state.setTrimEdge);
+    const setTrimEdgeUnit = useSettingsStore((state) => state.setTrimEdgeUnit);
+
+    const cornerRadiusSize = useSettingsStore((state) => state.cornerRadiusSize);
+    const cornerRadius = useSettingsStore((state) => state.cornerRadius);
+    const cornerRadiusUnit = useSettingsStore((state) => state.cornerRadiusUnit);
+    const setCornerRadiusSize = useSettingsStore((state) => state.setCornerRadiusSize);
+    const setCornerRadius = useSettingsStore((state) => state.setCornerRadius);
+    const setCornerRadiusUnit = useSettingsStore((state) => state.setCornerRadiusUnit);
+
     // Images With Bleed Settings
     const withBleedSourceAmount = useSettingsStore((state) => state.withBleedSourceAmount);
     const withBleedTargetMode = useSettingsStore((state) => state.withBleedTargetMode);
@@ -43,11 +57,120 @@ export function BleedSection() {
         { min: 0, max: 10 }
     );
 
+    const trimEdgeInput = useNormalizedInput(
+        trimEdgeWidth,
+        (value) => {
+            setTrimEdgeWidth(value);
+        },
+        { min: 0, max: 10 }
+    );
+
+    const cornerRadiusInput = useNormalizedInput(
+        cornerRadiusSize,
+        (value) => {
+            setCornerRadiusSize(value);
+        },
+        { min: 0, max: 10 }
+    );
+
     return (
         <div className="space-y-3">
             <h3 className="text-lg font-semibold dark:text-white">Bleed Settings</h3>
 
+            {/* Corner Mask */}
+            <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 -ml-2">
+                <Checkbox
+                    id="corner-mask"
+                    checked={cornerRadius} // Set to true for now
+                    onChange={(e) => setCornerRadius(e.target.checked)}
+                />
+                <Label htmlFor="corner-mask" className="flex-1 cursor-pointer">Enable Corner Mask</Label>
+            </div>
+            <div className="flex flex-col gap-2">
+                <Label className="text-nowrap">Corner Radius</Label>
+                <div className="grid grid-cols-2 gap-2">
+                    <NumberInput
+                        ref={cornerRadiusInput.inputRef}
+                        className="w-full"
+                        step={0.1}
+                        defaultValue={cornerRadiusInput.defaultValue}
+                        onChange={cornerRadiusInput.handleChange}
+                        onBlur={cornerRadiusInput.handleBlur}
+                        disabled={!cornerRadius}
+                    />
+                    <Select
+                        sizing="md"
+                        value={cornerRadiusUnit}
+                        onChange={(e) => {
+                            const newUnit = e.target.value as 'mm' | 'in';
+                            if (newUnit !== cornerRadiusUnit) {
+                                const converted = newUnit === 'in'
+                                    ? cornerRadiusSize / 25.4
+                                    : cornerRadiusSize * 25.4;
+                                const decimals = newUnit === 'in' ? 3 : 2;
+                                const rounded = parseFloat(converted.toFixed(decimals));
+                                setCornerRadiusSize(rounded);
+                                if (cornerRadiusInput.inputRef.current) {
+                                    cornerRadiusInput.inputRef.current.value = rounded.toString();
+                                }
+                            }
+                            setCornerRadiusUnit(newUnit);
+                        }}
+                        disabled={!cornerRadius}
+                        className="w-full"
+                    >
+                        <option value="mm">mm</option>
+                        <option value="in">in</option>
+                    </Select>
+                </div>
+            </div>
+            <hr className="border-gray-300 dark:border-gray-600" />
+            {/* Edge Trim */}
+            <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 -ml-2">
+                <Checkbox
+                    id="trim-edge"
+                    checked={trimEdge}
+                    onChange={(e) => setTrimEdge(e.target.checked)}
+                />
+                <Label htmlFor="trim-edge" className="flex-1 cursor-pointer">Enable Trim Edge</Label>
+            </div>
+            <div className="flex flex-col gap-2">
+                <Label className="text-nowrap">Trim Width</Label>
+                <div className="grid grid-cols-2 gap-2">
+                    <NumberInput
+                        ref={trimEdgeInput.inputRef}
+                        className="w-full"
+                        step={1}
+                        defaultValue={trimEdgeInput.defaultValue}
+                        onChange={trimEdgeInput.handleChange}
+                        onBlur={trimEdgeInput.handleBlur}
+                        disabled={!trimEdge}
+                    />
+                    <Select
+                        sizing="md"
+                        value={trimEdgeUnit}
+                        onChange={(e) => {
+                            const newUnit = e.target.value as 'mm' | 'in' | 'px';
+                            setTrimEdgeUnit(newUnit);
+                        }}
+                        disabled={!trimEdge}
+                        className="w-full"
+                    >
+                        <option value="px">px</option>
+                    </Select>
+                </div>
+            </div>
+            <hr className="border-gray-300 dark:border-gray-600" />
+
             {/* Global Bleed Width */}
+            <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 -ml-2">
+                <Checkbox
+                    id="bleed-edge"
+                    checked={bleedEdge}
+                    onChange={(e) => setBleedEdge(e.target.checked)}
+                />
+                <Label htmlFor="bleed-edge" className="flex-1 cursor-pointer">Enable Bleed Edge</Label>
+            </div>
             <div className="flex flex-col gap-2">
                 <Label className="text-nowrap">Bleed Width</Label>
                 <div className="grid grid-cols-2 gap-2">
@@ -87,15 +210,7 @@ export function BleedSection() {
                 </div>
             </div>
 
-            <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 -ml-2">
-                <Checkbox
-                    id="bleed-edge"
-                    checked={bleedEdge}
-                    onChange={(e) => setBleedEdge(e.target.checked)}
-                />
-                <Label htmlFor="bleed-edge" className="flex-1 cursor-pointer">Enable Bleed Edge</Label>
-            </div>
-
+            
 
             {/* Images With Bleed Settings */}
             <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">

@@ -30,6 +30,21 @@ export type Store = {
   setBleedEdge: (value: boolean) => void;
   bleedEdgeUnit: 'mm' | 'in';
   setBleedEdgeUnit: (value: 'mm' | 'in') => void;
+
+  trimEdgeWidth: number;
+  setTrimEdgeWidth: (value: number) => void;
+  trimEdge: boolean;
+  setTrimEdge: (value: boolean) => void;
+  trimEdgeUnit: 'mm' | 'in' | 'px';
+  setTrimEdgeUnit: (value: 'mm' | 'in' | 'px') => void;
+
+  cornerRadiusSize: number;
+  setCornerRadiusSize: (value: number) => void;
+  cornerRadius: boolean;
+  setCornerRadius: (value: boolean) => void;
+  cornerRadiusUnit: 'mm' | 'in';
+  setCornerRadiusUnit: (value: 'mm' | 'in') => void;
+
   // --- Bleed Settings (Source/Target Architecture) ---
   // With bleed: Images that already have bleed built in (MPC Autofill, etc.)
   withBleedSourceAmount: number;
@@ -153,6 +168,12 @@ const defaultPageSettings = {
   bleedEdgeWidth: 1,
   bleedEdge: true,
   bleedEdgeUnit: "mm" as "mm" | "in",
+  trimEdgeWidth: 3,
+  trimEdge: true,
+  trimEdgeUnit: "px" as "mm" | "in" | "px",
+  cornerRadiusSize: 3,
+  cornerRadius: true,
+  cornerRadiusUnit: "mm" as "mm" | "in",
   // --- Bleed Settings (Source/Target Architecture) ---
   // With bleed: Images that already have bleed built in (MPC Autofill, etc.)
   withBleedSourceAmount: 3.175, // Default 1/8" for MPC/Uploads with bleed
@@ -325,6 +346,31 @@ export const useSettingsStore = create<Store>()((set) => ({
   setBleedEdgeUnit: (value) => set((state) => {
     recordSettingChange("bleedEdgeUnit", state.bleedEdgeUnit);
     return { bleedEdgeUnit: value };
+  }),
+  setTrimEdgeWidth: (value) => set((state) => {
+    recordSettingChange("trimEdgeWidth", state.trimEdgeWidth);
+    return { trimEdgeWidth: value };
+  }),
+  setTrimEdge: (value) => set((state) => {
+    recordSettingChange("trimEdge", state.trimEdge);
+    return { trimEdge: value };
+  }),
+  setTrimEdgeUnit: (value) => set((state) => {
+    recordSettingChange("trimEdgeUnit", state.trimEdgeUnit);
+    return { trimEdgeUnit: value };
+  }),
+  //corner Radius Setters
+  setCornerRadiusSize: (value) => set((state) => {
+    recordSettingChange("cornerRadiusSize", state.cornerRadiusSize);
+    return { cornerRadiusSize: value };
+  }),
+  setCornerRadius: (value) => set((state) => {
+    recordSettingChange("cornerRadius", state.cornerRadius);
+    return { cornerRadius: value };
+  }),
+  setCornerRadiusUnit: (value) => set((state) => {
+    recordSettingChange("cornerRadiusUnit", state.cornerRadiusUnit);
+    return { cornerRadiusUnit: value };
   }),
   // With bleed setters
   setWithBleedSourceAmount: (value) => set((state) => {

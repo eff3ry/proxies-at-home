@@ -14,6 +14,11 @@ export type UndoableSettingKey =
     | "rows"
     | "bleedEdgeWidth"
     | "bleedEdge"
+    | "trimEdge"
+    | "trimEdgeWidth"
+    | "cornerRadiusSize"
+    | "cornerRadius"
+    | "cornerRadiusUnit"
     | "darkenMode"
     | "guideColor"
     | "guideWidth"
@@ -37,6 +42,7 @@ export type UndoableSettingKey =
     | "filterFeatures"
     | "filterMatchType"
     | "bleedEdgeUnit"
+    | "trimEdgeUnit"
     | "withBleedSourceAmount"
     | "withBleedTargetMode"
     | "withBleedTargetAmount"
@@ -60,6 +66,11 @@ const settingDescriptions: Record<UndoableSettingKey, string> = {
     rows: "rows",
     bleedEdgeWidth: "bleed width",
     bleedEdge: "bleed edge",
+    trimEdge: "trim edge",
+    trimEdgeWidth: "trim edge width",
+    cornerRadiusSize: "corner radius size",
+    cornerRadius: "corner radius",
+    cornerRadiusUnit: "corner radius unit",
     darkenMode: "darken mode",
     guideColor: "guide color",
     guideWidth: "guide width",
@@ -83,6 +94,7 @@ const settingDescriptions: Record<UndoableSettingKey, string> = {
     filterFeatures: "feature filter",
     filterMatchType: "filter match type",
     bleedEdgeUnit: "bleed unit",
+    trimEdgeUnit: "trim edge unit",
     withBleedSourceAmount: "provided bleed amount",
     withBleedTargetMode: "bleed generation mode",
     withBleedTargetAmount: "target bleed width",
