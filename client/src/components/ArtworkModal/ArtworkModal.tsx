@@ -295,16 +295,21 @@ export function ArtworkModal() {
     cardImageId,
     processedDisplayUrl,
   ]);
-  // ---------------------------------------------------------------------------
-  // 5. Compute face names and DFC status
-  // ---------------------------------------------------------------------------
-  // Only recalculate faceNames when prints array ACTUALLY changes
-  const faceNames = useMemo(
-    () => getFaceNamesFromPrints(displayData.prints),
-    [displayData.prints]
+  const cachedCardPrints = useLiveQuery(
+    async () => {
+      if (!modalCard?.name) return undefined;
+      const entry = await db.cardMetadataCache.where("name").equals(modalCard.name).first();
+      return entry?.hasFullPrints ? entry.data.prints : undefined;
+    },
+    [modalCard?.name]
   );
 
-  const isDFC = faceNames.length > 1 || !!modalCard?.linkedBackId;
+  const faceNames = useMemo(
+    () => getFaceNamesFromPrints(displayData.prints ?? cachedCardPrints),
+    [displayData.prints, cachedCardPrints]
+  );
+
+  const isDFC = faceNames.length > 1 || initialFace === 'back';
 
   const dfcFrontFaceName = faceNames[0] || null;
   const dfcBackFaceName = faceNames[1] || null;
