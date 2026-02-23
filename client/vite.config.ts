@@ -33,6 +33,7 @@ export default defineConfig({
     tailwindcss(),
     flowbiteReact(),
     !process.env.VITEST && VitePWA({
+      selfDestroying: true,
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "apple-touch-icon.png", "mask-icon.svg"],
       manifest: {

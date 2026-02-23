@@ -33,6 +33,7 @@ setInterval(() => cleanupExpiredShares(), 60 * 60 * 1000); // Every hour
  */
 export function startServer(port: number = 3001): Promise<number> {
   const app = express();
+  app.set('etag', false);
 
   app.use(cors({
     origin: (_, cb) => cb(null, true),

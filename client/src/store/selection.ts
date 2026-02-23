@@ -154,9 +154,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
         const newFlipped = new Set(state.flippedCards);
         const uuidsToUpdate: string[] = [];
 
-        // If this card is selected and there are multiple selections, flip all selected
         if (state.selectedCards.has(uuid) && state.selectedCards.size > 1) {
-            // Determine target state based on clicked card
             const shouldFlip = !state.flippedCards.has(uuid);
 
             state.selectedCards.forEach((selectedUuid) => {
@@ -168,14 +166,12 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 uuidsToUpdate.push(selectedUuid);
             });
 
-            // Persist to database (fire and forget)
             import('../db').then(({ db }) => {
                 db.cards.bulkUpdate(
                     uuidsToUpdate.map(id => ({ key: id, changes: { isFlipped: shouldFlip } }))
                 );
             });
         } else {
-            // Single card flip
             const isCurrentlyFlipped = newFlipped.has(uuid);
             if (isCurrentlyFlipped) {
                 newFlipped.delete(uuid);
@@ -183,7 +179,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
                 newFlipped.add(uuid);
             }
 
-            // Persist to database (fire and forget)
             import('../db').then(({ db }) => {
                 db.cards.update(uuid, { isFlipped: !isCurrentlyFlipped });
             });
@@ -204,7 +199,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
             return { flippedCards: newFlipped };
         });
 
-        // Persist
         import('../db').then(({ db }) => {
             db.cards.bulkUpdate(
                 uuids.map(id => ({ key: id, changes: { isFlipped } }))

@@ -7,8 +7,9 @@ import {
 import {
   getImageSourceSync,
   isMpcSource,
-  isCustomSource,
+  isUploadLibrarySource,
 } from "@/helpers/imageSourceUtils";
+import type { UploadLibraryItem } from "@/helpers/uploadLibrary";
 import {
   getFaceNamesFromPrints,
   computeTabLabels,
@@ -18,6 +19,7 @@ import {
 import { undoableChangeCardback } from "@/helpers/undoableActions";
 import { ArtworkBleedSettings } from "../CardEditorModal/ArtworkBleedSettings";
 import { ResponsiveModal, ArtSourceToggle, TabBar } from "../common";
+import type { ArtSource } from "../common/ArtSourceToggle";
 import { ArtworkTabContent } from "./ArtworkTabContent";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Button, Checkbox, Label } from "flowbite-react";
@@ -74,7 +76,7 @@ export function ArtworkModal() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingDeleteName, setPendingDeleteName] = useState<string>("");
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const [artSource, setArtSource] = useState<"scryfall" | "mpc">("scryfall");
+  const [artSource, setArtSource] = useState<ArtSource>("scryfall");
   const [mpcFiltersCollapsed, setMpcFiltersCollapsed] = useState(true);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState("");
@@ -121,15 +123,15 @@ export function ArtworkModal() {
     setShowCardbackLibrary(false);
     setActiveTab(initialTab);
     setSelectedFace(initialFace);
-    let newSource = useSettingsStore.getState().preferredArtSource;
+    let newSource: ArtSource = useSettingsStore.getState().preferredArtSource;
     if (initialArtSource) {
       newSource = initialArtSource;
     } else if (modalCard?.imageId) {
       const detectedSource = getImageSourceSync(modalCard.imageId);
       if (isMpcSource(detectedSource)) {
         newSource = "mpc";
-      } else if (isCustomSource(detectedSource)) {
-        newSource = useSettingsStore.getState().preferredArtSource;
+      } else if (isUploadLibrarySource(detectedSource)) {
+        newSource = "upload-library";
       } else {
         newSource = "scryfall";
       }
@@ -140,8 +142,20 @@ export function ArtworkModal() {
   useEffect(() => {
     if (!isModalOpen) {
       setLastOpenCardUuid(undefined);
+    } else if (modalCard && initialFace) {
+      console.log(`[ArtworkModal] MOUNT EFFECT: setFlipped(${modalCard.uuid}, ${initialFace === "back"}) — initialFace=${initialFace}, modalCard.name=${modalCard.name}`);
+      useSelectionStore.getState().setFlipped([modalCard.uuid], initialFace === "back");
     }
-  }, [isModalOpen]);
+  }, [isModalOpen, modalCard, initialFace]);
+
+  // Sync tab change with physical card flip in viewport
+  const handleFaceTabChange = useCallback(
+    (face: "front" | "back") => {
+      console.log(`[ArtworkModal] handleFaceTabChange called: face=${face}, current selectedFace=${selectedFace}`);
+      setSelectedFace(face);
+    },
+    [selectedFace]
+  );
 
   const setSelectedArtId = (artId: string) => {
     if (modalCard?.uuid) {
@@ -194,6 +208,7 @@ export function ArtworkModal() {
         : undefined,
     [modalCard?.linkedBackId]
   );
+  const hasUploadLibraryItems = useLiveQuery(() => db.user_images.count().then(c => c > 0), [], false);
   const autoMpcSetForBackCardId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (selectedFace === "back" && linkedBackCard?.imageId) {
@@ -209,6 +224,8 @@ export function ArtworkModal() {
 
   const activeCard =
     selectedFace === "back" && linkedBackCard ? linkedBackCard : modalCard;
+  console.log(`[ArtworkModal] activeCard computed: selectedFace=${selectedFace}, hasLinkedBack=${!!linkedBackCard}, activeCard.name=${activeCard?.name}, activeCard.uuid=${activeCard?.uuid}`);
+
   const handleSaveName = useCallback(async () => {
     if (!editedName.trim() || !activeCard) return;
 
@@ -278,12 +295,23 @@ export function ArtworkModal() {
     cardImageId,
     processedDisplayUrl,
   ]);
+  const cachedCardPrints = useLiveQuery(
+    async () => {
+      if (!modalCard?.name) return undefined;
+      const entry = await db.cardMetadataCache.where("name").equals(modalCard.name).first();
+      return entry?.hasFullPrints ? entry.data.prints : undefined;
+    },
+    [modalCard?.name]
+  );
 
   const faceNames = useMemo(
-    () => getFaceNamesFromPrints(displayData.prints),
-    [displayData.prints]
+    () => getFaceNamesFromPrints(displayData.prints ?? cachedCardPrints),
+    [displayData.prints, cachedCardPrints]
   );
-  const isDFC = faceNames.length > 1;
+
+  const isDFC = faceNames.length > 1 ||
+    (initialFace === 'back' && !!linkedBackCard && !isCardbackId(linkedBackCard.imageId ?? ''));
+
   const dfcFrontFaceName = faceNames[0] || null;
   const dfcBackFaceName = faceNames[1] || null;
 
@@ -297,7 +325,7 @@ export function ArtworkModal() {
     !isUsingCardbackLibrary &&
     !showCardbackLibrary;
 
-  const isCustomUpload = isCustomSource(
+  const isUploadLibraryItem = isUploadLibrarySource(
     getImageSourceSync(activeCard?.imageId)
   );
 
@@ -361,10 +389,13 @@ export function ArtworkModal() {
     hasBuiltInBleed?: boolean;
     cardMetadata?: Parameters<typeof changeCardArtwork>[6];
     previewImageUrls?: string[];
+    overrides?: Partial<CardOption['overrides']>;
+    cardToUpdate?: CardOption;
   };
 
   const applyArtworkToCards = useCallback(
     async (config: ArtApplicationConfig) => {
+      console.log(`[ArtworkModal] applyArtworkToCards ENTRY: targetImageId=${config.targetImageId?.substring(0, 20)}, cardName=${config.cardName}, selectedFace=${selectedFace}`);
       const {
         targetImageId,
         cardName,
@@ -372,8 +403,10 @@ export function ArtworkModal() {
         hasBuiltInBleed,
         cardMetadata,
         previewImageUrls,
+        overrides,
+        cardToUpdate,
       } = config;
-      const targetCard = activeCard;
+      const targetCard = cardToUpdate || activeCard;
       if (!targetCard) return;
 
       const selectedCards = useSelectionStore.getState().selectedCards;
@@ -396,7 +429,8 @@ export function ArtworkModal() {
               cardName,
               previewImageUrls,
               cardMetadata,
-              hasBuiltInBleed
+              hasBuiltInBleed,
+              overrides
             );
 
             if (needsEnrichment) {
@@ -419,7 +453,8 @@ export function ArtworkModal() {
           cardName,
           previewImageUrls,
           cardMetadata,
-          hasBuiltInBleed
+          hasBuiltInBleed,
+          overrides
         );
 
         if (needsEnrichment) {
@@ -433,6 +468,7 @@ export function ArtworkModal() {
       }
 
       if (modalCard?.uuid) {
+        console.log(`[ArtworkModal] applyArtworkToCards AFTER: setFlipped(${modalCard.uuid}, ${selectedFace === "back"}) — selectedFace=${selectedFace}`);
         useSelectionStore
           .getState()
           .setFlipped([modalCard.uuid], selectedFace === "back");
@@ -481,8 +517,6 @@ export function ArtworkModal() {
     );
 
     const newFaceName = selectedPrint?.faceName;
-    // If we have an explicit newCardName (from search selection), use it.
-    // Otherwise fallback to faceName or activeCard.name logic.
     const shouldUpdateName =
       (!!newCardName && newCardName !== activeCard.name) ||
       (isDFC && newFaceName && newFaceName !== activeCard.name);
@@ -551,12 +585,16 @@ export function ArtworkModal() {
         const newName =
           newCardName || (shouldUpdateName ? newFaceName : resolved.name);
 
+        // If the applied artwork is MPC or a Custom Upload, disable default darkening
+        const isMpcOrCustom = isUploadLibrarySource(getImageSourceSync(newImageId)) || artSource === 'mpc';
+
         await applyArtworkToCards({
           targetImageId: newImageId,
           cardName: newName,
           cardMetadata,
           previewImageUrls:
             isReplacing && resolved.imageId ? [resolved.imageId] : undefined,
+          overrides: isMpcOrCustom ? { darkenMode: 'none', darkenUseGlobalSettings: false } : undefined,
         });
 
         // Handle DFC back face linking
@@ -593,6 +631,7 @@ export function ArtworkModal() {
       }
     } catch (e) {
       console.error("Failed to resolve artwork selection:", e);
+      debugLog("Failed to resolve artwork selection:", e);
     }
   }
 
@@ -662,6 +701,7 @@ export function ArtworkModal() {
             type_line: resolved.type_line,
             mana_cost: resolved.mana_cost,
           },
+          overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
         });
 
         // Handle DFC back face linking
@@ -681,6 +721,7 @@ export function ArtworkModal() {
               hasBuiltInBleed:
                 (backTask as { hasBleed?: boolean }).hasBleed ?? false,
               usesDefaultCardback: false,
+              overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
             });
           } else {
             // Create new linked back card
@@ -691,8 +732,15 @@ export function ArtworkModal() {
               {
                 hasBuiltInBleed:
                   (backTask as { hasBleed?: boolean }).hasBleed ?? false,
+                overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
               }
             );
+
+            // Fetch the updated front card to ensure `linkedBackId` is present in local state
+            const refreshedCard = await db.cards.get(modalCard.uuid);
+            if (refreshedCard) {
+              useArtworkModalStore.getState().updateCard(refreshedCard);
+            }
           }
         }
 
@@ -705,7 +753,111 @@ export function ArtworkModal() {
         );
       }
     } catch (e) {
+      console.error("Failed to resolve MPC selection:", e);
       debugLog("Failed to resolve MPC selection:", e);
+    }
+  }
+
+  async function handleSelectUploadLibraryArt(upload: UploadLibraryItem) {
+    console.log(`[ArtworkModal] handleSelectUploadLibraryArt ENTRY: upload.hash=${upload.hash.substring(0, 8)}, upload.displayName=${upload.displayName}, linkedFront=${upload.linkedFrontHash?.substring(0, 8)}, linkedBack=${upload.linkedBackHash?.substring(0, 8)}, selectedFace=${selectedFace}, activeCard=${activeCard?.name}`);
+    if (!activeCard || !modalCard) {
+      console.warn(`[ArtworkModal] handleSelectUploadLibraryArt aborted because activeCard or modalCard is missing.`);
+      return;
+    }
+    setPreviewCardData(null);
+    setSelectedArtId(upload.hash);
+
+    let frontItemHash = upload.hash;
+    let frontItemName = upload.displayName || upload.canonicalCardName;
+    let frontHasBleed = upload.hasBuiltInBleed ?? false;
+    let backItemHash: string | undefined = undefined;
+    let backItemName: string | undefined = undefined;
+    let backHasBleed = false;
+
+    const isDfcUpload = !!upload.linkedFrontHash || !!upload.linkedBackHash;
+    let faceToNavigateTo: "front" | "back" | null = null;
+    let targetCardForFrontFace = activeCard;
+
+    if (isDfcUpload) {
+      targetCardForFrontFace = modalCard;
+
+      if (upload.linkedFrontHash) {
+        const frontImg = await db.user_images.get(upload.linkedFrontHash);
+        if (frontImg) {
+          frontItemHash = frontImg.hash;
+          frontItemName = frontImg.displayName || frontImg.canonicalCardName || "Untitled Front";
+          frontHasBleed = frontImg.hasBuiltInBleed ?? false;
+
+          backItemHash = upload.hash;
+          backItemName = upload.displayName || upload.canonicalCardName;
+          backHasBleed = upload.hasBuiltInBleed ?? false;
+        }
+        faceToNavigateTo = "back";
+      } else if (upload.linkedBackHash) {
+        const backImg = await db.user_images.get(upload.linkedBackHash);
+        if (backImg) {
+          backItemHash = backImg.hash;
+          backItemName = backImg.displayName || backImg.canonicalCardName || "Untitled Back";
+          backHasBleed = backImg.hasBuiltInBleed ?? false;
+        }
+        faceToNavigateTo = "front";
+      }
+    } else {
+      if (selectedFace === "back") {
+        faceToNavigateTo = "back";
+      } else {
+        faceToNavigateTo = "front";
+      }
+    }
+
+    await applyArtworkToCards({
+      targetImageId: frontItemHash,
+      cardName: frontItemName,
+      hasBuiltInBleed: frontHasBleed,
+      cardMetadata: upload.canonicalCardSet
+        ? { set: upload.canonicalCardSet, number: upload.canonicalCardNumber }
+        : undefined,
+      cardToUpdate: targetCardForFrontFace,
+      overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
+    });
+
+    if (backItemHash && backItemName && isDfcUpload) {
+      const wasNewlyLinked = !modalCard.linkedBackId;
+
+      if (modalCard.linkedBackId) {
+        await db.cards.update(modalCard.linkedBackId, {
+          imageId: backItemHash,
+          name: backItemName,
+          hasBuiltInBleed: backHasBleed,
+          usesDefaultCardback: false,
+          overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
+        });
+      } else {
+        await createLinkedBackCard(
+          modalCard.uuid,
+          backItemHash,
+          backItemName,
+          {
+            hasBuiltInBleed: backHasBleed,
+            overrides: { darkenMode: 'none', darkenUseGlobalSettings: false },
+          }
+        );
+      }
+
+      if (wasNewlyLinked) {
+        const refreshedCard = await db.cards.get(modalCard.uuid);
+        if (refreshedCard) {
+          useArtworkModalStore.getState().updateCard(refreshedCard);
+        }
+      }
+    }
+
+    if (faceToNavigateTo && faceToNavigateTo !== selectedFace) {
+      console.log(`[ArtworkModal] handleSelectUploadLibraryArt: navigating to face=${faceToNavigateTo} via handleFaceTabChange`);
+      handleFaceTabChange(faceToNavigateTo);
+    } else if (faceToNavigateTo) {
+      console.log(`[ArtworkModal] handleSelectUploadLibraryArt: setFlipped(${modalCard.uuid}, ${faceToNavigateTo === "back"}) — faceToNavigateTo=${faceToNavigateTo}`);
+      useSelectionStore.getState().setFlipped([modalCard.uuid], faceToNavigateTo === "back");
     }
   }
 
@@ -794,6 +946,7 @@ export function ArtworkModal() {
     );
 
     if (modalCard?.uuid) {
+      console.log(`[ArtworkModal] handleSelectCardback: setFlipped(${modalCard.uuid}, ${selectedFace === "back"}) — selectedFace=${selectedFace}`);
       useSelectionStore
         .getState()
         .setFlipped([modalCard.uuid], selectedFace === "back");
@@ -1065,7 +1218,7 @@ export function ArtworkModal() {
       )}
       <ResponsiveModal
         isOpen={isModalOpen}
-        onClose={pendingDeleteId ? () => {} : closeModal}
+        onClose={pendingDeleteId ? () => { } : closeModal}
         mobileLandscapeSidebar
         header={
           <div className="landscape-sidebar-header border-b border-gray-200 dark:border-gray-600 max-lg:portrait:hidden">
@@ -1120,7 +1273,7 @@ export function ArtworkModal() {
                 ) : (
                   <>
                     {`Select Artwork for ${displayData.name}`}
-                    {isCustomUpload && (
+                    {isUploadLibraryItem && (
                       <button
                         onClick={() => {
                           setEditedName(displayData.name || "");
@@ -1154,6 +1307,7 @@ export function ArtworkModal() {
                 <ArtSourceToggle
                   value={artSource}
                   onChange={setArtSource}
+                  showUploadLibrary={hasUploadLibraryItems}
                   vertical
                   reversed
                 />
@@ -1176,7 +1330,7 @@ export function ArtworkModal() {
                       { id: "back" as const, label: tabLabels.back },
                     ]}
                     activeTab={selectedFace}
-                    onTabChange={setSelectedFace}
+                    onTabChange={(face) => handleFaceTabChange(face as "front" | "back")}
                     variant="primary"
                   />
                 </div>
@@ -1203,49 +1357,49 @@ export function ArtworkModal() {
                   },
                   ...(showCardbackButton
                     ? [
-                        {
-                          id: "cardback" as const,
-                          label: "Use Cardback",
-                          icon: (
-                            <svg
-                              className="h-5 w-4"
-                              viewBox="0 0 50 70"
-                              fill="none"
-                            >
-                              <rect
-                                x="0"
-                                y="0"
-                                width="50"
-                                height="70"
-                                rx="4"
-                                fill="#1a1a1a"
-                              />
-                              <rect
-                                x="3"
-                                y="3"
-                                width="44"
-                                height="64"
-                                rx="2"
-                                fill="#8B6914"
-                              />
-                              <ellipse
-                                cx="25"
-                                cy="35"
-                                rx="17"
-                                ry="24"
-                                fill="#4A5899"
-                              />
-                              <ellipse
-                                cx="25"
-                                cy="35"
-                                rx="14"
-                                ry="20"
-                                fill="#C4956A"
-                              />
-                            </svg>
-                          ),
-                        },
-                      ]
+                      {
+                        id: "cardback" as const,
+                        label: "Use Cardback",
+                        icon: (
+                          <svg
+                            className="h-5 w-4"
+                            viewBox="0 0 50 70"
+                            fill="none"
+                          >
+                            <rect
+                              x="0"
+                              y="0"
+                              width="50"
+                              height="70"
+                              rx="4"
+                              fill="#1a1a1a"
+                            />
+                            <rect
+                              x="3"
+                              y="3"
+                              width="44"
+                              height="64"
+                              rx="2"
+                              fill="#8B6914"
+                            />
+                            <ellipse
+                              cx="25"
+                              cy="35"
+                              rx="17"
+                              ry="24"
+                              fill="#4A5899"
+                            />
+                            <ellipse
+                              cx="25"
+                              cy="35"
+                              rx="14"
+                              ry="20"
+                              fill="#C4956A"
+                            />
+                          </svg>
+                        ),
+                      },
+                    ]
                     : []),
                 ]}
                 activeTab={activeTab}
@@ -1284,6 +1438,7 @@ export function ArtworkModal() {
               onSetAsDefaultCardback={handleSetAsDefaultCardback}
               onSelectArtwork={handleSelectArtwork}
               onSelectMpcArt={handleSelectMpcArt}
+              onSelectUploadLibraryArt={handleSelectUploadLibraryArt}
               onClose={closeModal}
               onRequestDelete={handleRequestDelete}
               onExecuteDelete={handleExecuteDelete}
@@ -1293,8 +1448,9 @@ export function ArtworkModal() {
               onMpcFiltersCollapsedChange={setMpcFiltersCollapsed}
               activeTab={activeTab}
               setActiveTab={setActiveTab}
-              setSelectedFace={setSelectedFace}
+              setSelectedFace={handleFaceTabChange}
               setZoomLevel={setZoomLevel}
+              showUploadLibrary={hasUploadLibraryItems}
             />
           )}
 
@@ -1317,7 +1473,6 @@ export function ArtworkModal() {
             currentArtSource: artSource,
           });
           if (mpcImageUrl) {
-            // MPC path: apply MPC art directly
             debugLog(
               "[ArtworkModal] onSelectCard: MPC path - calling handleSelectMpcArt"
             );
@@ -1333,14 +1488,19 @@ export function ArtworkModal() {
               source: "",
               extension: "",
               size: 0,
-            });
+            }).then(() => setIsSearchOpen(false));
           } else {
-            // Scryfall path: fetch card data and update modal preview
             debugLog(
               "[ArtworkModal] onSelectCard: Scryfall path - calling handleSearch"
             );
             handleSearch(name, true, specificPrint);
           }
+        }}
+        onUploadLibraryItemSelect={(upload) => {
+          handleSelectUploadLibraryArt(upload).then(() => {
+            setArtSource("upload-library");
+            setIsSearchOpen(false);
+          });
         }}
         initialSource={artSource}
       />

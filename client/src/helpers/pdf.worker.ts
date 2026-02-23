@@ -1,6 +1,4 @@
 import {
-    IN,
-    MM_TO_PX,
     toProxied,
     trimBleedFromBitmap,
     trimBleedByMm,
@@ -14,6 +12,7 @@ import { generatePerCardGuide, executePathCommands, type GuideStyle } from "./cu
 import { db, type EffectCacheEntry } from "../db";
 import type { CardOption, CardOverrides } from "../../../shared/types";
 import { debugLog } from "./debug";
+import { IN_TO_PX, MM_TO_PX } from "@/constants/commonConstants";
 
 export { };
 declare const self: DedicatedWorkerGlobalScope;
@@ -61,6 +60,8 @@ function hashString(str: string): string {
     return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+const WORKER_VERSION = "v2-explicit-dpi";
+
 function computeEffectCacheKey(imageId: string, overrides: CardOverrides, dpi: number): string {
     const sortedOverrides = Object.keys(overrides || {})
         .sort()
@@ -72,7 +73,7 @@ function computeEffectCacheKey(imageId: string, overrides: CardOverrides, dpi: n
             return acc;
         }, {} as Record<string, unknown>);
     const overridesHash = hashString(JSON.stringify(sortedOverrides));
-    return `${imageId}:${dpi}:${overridesHash}`;
+    return `${imageId}:${dpi}:${overridesHash}:${WORKER_VERSION}`;
 }
 
 async function cacheEffectBlob(imageId: string, overrides: CardOverrides, blob: Blob, dpi: number): Promise<void> {
@@ -106,6 +107,7 @@ function createFullPageGuidesCanvas(
     contentWidthPx: number, contentHeightPx: number,
     spacingPx: number, guideWidthPx: number,
     cutLineStyle: 'none' | 'edges' | 'full',
+    guidePlacement: 'inside' | 'outside' | 'center' = 'outside',
     rightAlignRows: boolean = false,
     totalCards: number = 0,
     blankIndices: Set<number> = new Set()
@@ -115,9 +117,8 @@ function createFullPageGuidesCanvas(
     const canvas = new OffscreenCanvas(pageW, pageH);
     const ctx = canvas.getContext('2d')!;
 
-    // Use Sets to collect unique cut positions
-    const xCuts = new Set<number>();
-    const yCuts = new Set<number>();
+    const xCuts = new Map<number, 'left' | 'right' | 'both'>();
+    const yCuts = new Map<number, 'top' | 'bottom' | 'both'>();
 
     // For each card, calculate its cut positions (skip blank cards)
     cardLayouts.forEach((layout, idx) => {
@@ -156,10 +157,10 @@ function createFullPageGuidesCanvas(
         const topCut = cardY + layout.bleedPx;
         const bottomCut = cardY + layout.bleedPx + contentHeightPx;
 
-        xCuts.add(leftCut);
-        xCuts.add(rightCut);
-        yCuts.add(topCut);
-        yCuts.add(bottomCut);
+        xCuts.set(leftCut, xCuts.get(leftCut) === 'right' ? 'both' : 'left');
+        xCuts.set(rightCut, xCuts.get(rightCut) === 'left' ? 'both' : 'right');
+        yCuts.set(topCut, yCuts.get(topCut) === 'bottom' ? 'both' : 'top');
+        yCuts.set(bottomCut, yCuts.get(bottomCut) === 'top' ? 'both' : 'bottom');
     });
 
     // Calculate grid bounds for edge-style lines
@@ -168,39 +169,85 @@ function createFullPageGuidesCanvas(
 
     ctx.fillStyle = "#000000";
 
+    const halfWidth = guideWidthPx / 2;
+
     // Draw vertical lines
-    for (const x of xCuts) {
-        if (cutLineStyle === 'full') {
-            ctx.fillRect(x, 0, guideWidthPx, pageH);
-        } else {
-            // Edges only - stubs at top and bottom
-            if (startY > 0) {
-                ctx.fillRect(x, 0, guideWidthPx, startY);
+    xCuts.forEach((type, x) => {
+        let offsetPx = 0;
+
+        const drawLine = (finalOffsetX: number) => {
+            const lineX = x + finalOffsetX - halfWidth;
+            if (cutLineStyle === 'full') {
+                ctx.fillRect(lineX, 0, guideWidthPx, pageH);
+            } else {
+                // Edges only - stubs at top and bottom
+                if (startY > 0) {
+                    ctx.fillRect(lineX, 0, guideWidthPx, startY);
+                }
+                const botStubStart = startY + gridHeightPx;
+                const botStubH = pageH - botStubStart;
+                if (botStubH > 0) {
+                    ctx.fillRect(lineX, botStubStart, guideWidthPx, botStubH);
+                }
             }
-            const botStubStart = startY + gridHeightPx;
-            const botStubH = pageH - botStubStart;
-            if (botStubH > 0) {
-                ctx.fillRect(x, botStubStart, guideWidthPx, botStubH);
+        };
+
+        if (type === 'left') {
+            offsetPx = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+            drawLine(offsetPx);
+        } else if (type === 'right') {
+            offsetPx = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+            drawLine(offsetPx);
+        } else if (type === 'both') {
+            const leftOffset = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+            const rightOffset = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+            if (leftOffset === rightOffset) {
+                drawLine(leftOffset);
+            } else {
+                drawLine(leftOffset);
+                drawLine(rightOffset);
             }
         }
-    }
+    });
 
     // Draw horizontal lines
-    for (const y of yCuts) {
-        if (cutLineStyle === 'full') {
-            ctx.fillRect(0, y, pageW, guideWidthPx);
-        } else {
-            // Edges only - stubs at left and right
-            if (startX > 0) {
-                ctx.fillRect(0, y, startX, guideWidthPx);
+    yCuts.forEach((type, y) => {
+        let offsetPx = 0;
+
+        const drawLine = (finalOffsetY: number) => {
+            const lineY = y + finalOffsetY - halfWidth;
+            if (cutLineStyle === 'full') {
+                ctx.fillRect(0, lineY, pageW, guideWidthPx);
+            } else {
+                // Edges only - stubs at left and right
+                if (startX > 0) {
+                    ctx.fillRect(0, lineY, startX, guideWidthPx);
+                }
+                const rightStubStart = startX + gridWidthPx;
+                const rightStubW = pageW - rightStubStart;
+                if (rightStubW > 0) {
+                    ctx.fillRect(rightStubStart, lineY, rightStubW, guideWidthPx);
+                }
             }
-            const rightStubStart = startX + gridWidthPx;
-            const rightStubW = pageW - rightStubStart;
-            if (rightStubW > 0) {
-                ctx.fillRect(rightStubStart, y, rightStubW, guideWidthPx);
+        };
+
+        if (type === 'top') {
+            offsetPx = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+            drawLine(offsetPx);
+        } else if (type === 'bottom') {
+            offsetPx = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+            drawLine(offsetPx);
+        } else if (type === 'both') {
+            const topOffset = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+            const bottomOffset = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+            if (topOffset === bottomOffset) {
+                drawLine(topOffset);
+            } else {
+                drawLine(topOffset);
+                drawLine(bottomOffset);
             }
         }
-    }
+    });
 
     return canvas;
 }
@@ -437,8 +484,8 @@ self.onmessage = async (event: MessageEvent) => {
             perCardBackOffsets
         } = settings;
 
-        const pageWidthPx = pageSizeUnit === "in" ? IN(pageWidth, DPI) : MM_TO_PX(pageWidth, DPI);
-        const pageHeightPx = pageSizeUnit === "in" ? IN(pageHeight, DPI) : MM_TO_PX(pageHeight, DPI);
+        const pageWidthPx = pageSizeUnit === "in" ? IN_TO_PX(pageWidth, DPI) : MM_TO_PX(pageWidth, DPI);
+        const pageHeightPx = pageSizeUnit === "in" ? IN_TO_PX(pageHeight, DPI) : MM_TO_PX(pageHeight, DPI);
         const contentWidthInPx = MM_TO_PX(63, DPI);
         const contentHeightInPx = MM_TO_PX(88, DPI);
         const spacingPx = MM_TO_PX(cardSpacingMm || 0, DPI);
@@ -510,6 +557,7 @@ self.onmessage = async (event: MessageEvent) => {
             pageWidthPx, pageHeightPx, startX, startY, columns,
             layouts, colWidths, rowHeights, colOffsets, rowOffsets,
             contentWidthInPx, contentHeightInPx, spacingPx, scaledGuideWidth, cutLineStyle,
+            guidePlacement ?? 'outside',
             rightAlignRows, pageCards.length, blankIndices
         );
         if (fullPageGuidesCanvas) {
@@ -664,6 +712,7 @@ self.onmessage = async (event: MessageEvent) => {
                 if (hasAdvancedOverrides(card.overrides)) {
                     // Check pre-rendered effect cache first
                     const cachedEffectBlob = effectCacheById?.get(card.uuid);
+
                     if (cachedEffectBlob) {
                         debugLog(`[PDF Worker] Card ${idx}: Using effect cache`);
                         bitmap.close();
@@ -671,6 +720,7 @@ self.onmessage = async (event: MessageEvent) => {
                     } else {
                         debugLog(`[PDF Worker] Card ${idx}: Applying WebGL overrides`);
                         const params = overridesToRenderParams(card.overrides!, effectiveDarkenMode as 'none' | 'darken-all' | 'contrast-edges' | 'contrast-full');
+                        params.dpi = DPI;
                         const renderedBlob = await renderCardWithOverridesWorker(bitmap, params);
                         bitmap.close();
                         bitmap = await createImageBitmap(renderedBlob);
@@ -804,23 +854,40 @@ self.onmessage = async (event: MessageEvent) => {
 
                             img.close();
 
-                            // Apply advanced overrides if present (same as fast path)
-                            if (hasAdvancedOverrides(card.overrides) && finalCardCanvas instanceof OffscreenCanvas) {
+                            // Apply advanced overrides if present
+                            if (hasAdvancedOverrides(card.overrides)) {
+                                let workingBitmap: ImageBitmap;
+                                let cleanupBitmap = false;
+
+                                if (finalCardCanvas instanceof OffscreenCanvas) {
+                                    workingBitmap = await createImageBitmap(finalCardCanvas);
+                                    cleanupBitmap = true;
+                                } else {
+                                    workingBitmap = finalCardCanvas;
+                                }
+
                                 const params = overridesToRenderParams(card.overrides!, effectiveDarkenMode as 'none' | 'darken-all' | 'contrast-edges' | 'contrast-full');
-                                // Convert OffscreenCanvas to ImageBitmap for rendering
-                                const bitmap = await createImageBitmap(finalCardCanvas);
-                                const renderedBlob = await renderCardWithOverridesWorker(bitmap, params);
-                                bitmap.close();
+                                params.dpi = DPI;
+                                const renderedBlob = await renderCardWithOverridesWorker(workingBitmap, params);
+
+                                // Cleanup working bitmap if it was a temporary creation
+                                if (cleanupBitmap) {
+                                    workingBitmap.close();
+                                } else {
+                                    // If we used finalCardCanvas (ImageBitmap) directly, close it before replacing
+                                    if (finalCardCanvas instanceof ImageBitmap) {
+                                        finalCardCanvas.close();
+                                    }
+                                }
+
                                 // Replace finalCardCanvas with rendered result
                                 finalCardCanvas = await createImageBitmap(renderedBlob);
-                                // Cache for future exports (fire-and-forget)
+                                // Cache for future exports (fire-and-forget, don't block export)
                                 if (card.imageId && card.overrides) {
                                     void cacheEffectBlob(card.imageId, card.overrides, renderedBlob, DPI);
                                 }
                             }
                         }
-
-                        // DON'T cache here - we cache AFTER trimming to cache the final result
                     } finally {
                         if (cleanupTimeout) clearTimeout(cleanupTimeout);
                         if (src?.startsWith("blob:")) URL.revokeObjectURL(src);

@@ -8,8 +8,7 @@
 import { useRef, useEffect } from 'react';
 import { Graphics, type Container, type Application } from 'pixi.js';
 import type { CardWithGlobalLayout, PageLayoutInfo } from './PixiVirtualCanvas';
-
-const MM_TO_PX = 96 / 25.4;
+import { CONSTANTS } from "@/constants/commonConstants";
 
 interface UsePageGuidesProps {
     isReady: boolean;
@@ -18,6 +17,7 @@ interface UsePageGuidesProps {
     pages: PageLayoutInfo[];
     cards: CardWithGlobalLayout[];
     cutLineStyle: 'none' | 'full' | 'edges';
+    guidePlacement?: 'inside' | 'outside' | 'center';
     guideWidth: number;
 }
 
@@ -31,6 +31,7 @@ export function usePageGuides({
     pages,
     cards,
     cutLineStyle,
+    guidePlacement,
     guideWidth,
 }: UsePageGuidesProps): void {
     const graphicsRef = useRef<Graphics | null>(null);
@@ -75,14 +76,12 @@ export function usePageGuides({
 
             // Process each card to compute cut positions
             pageCards.forEach((card) => {
-                const bleedPx = card.bleedMm * MM_TO_PX;
-                const baseWidthPx = card.baseCardWidthMm * MM_TO_PX;
-                const baseHeightPx = card.baseCardHeightMm * MM_TO_PX;
+                const bleedPx = card.bleedMm * CONSTANTS.DISPLAY_MM_TO_PX;
 
                 const leftCut = card.globalX + bleedPx;
-                const rightCut = card.globalX + bleedPx + baseWidthPx;
+                const rightCut = card.globalX + bleedPx + CONSTANTS.CARD_WIDTH_PX;
                 const topCut = card.globalY + bleedPx;
-                const bottomCut = card.globalY + bleedPx + baseHeightPx;
+                const bottomCut = card.globalY + bleedPx + CONSTANTS.CARD_HEIGHT_PX;
 
                 // Track grid bounds
                 gridStartXPx = Math.min(gridStartXPx, leftCut);
@@ -118,8 +117,25 @@ export function usePageGuides({
                     }
                 };
 
-                if (type === 'left' || type === 'both') drawLine(-guideWidthPx);
-                if (type === 'right' || type === 'both') drawLine(0);
+                const halfWidth = guideWidthPx / 2;
+                let offsetPx = 0;
+
+                if (type === 'left') {
+                    offsetPx = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+                    drawLine(offsetPx);
+                } else if (type === 'right') {
+                    offsetPx = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+                    drawLine(offsetPx);
+                } else if (type === 'both') {
+                    const leftOffset = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+                    const rightOffset = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+                    if (leftOffset === rightOffset) {
+                        drawLine(leftOffset);
+                    } else {
+                        drawLine(leftOffset);
+                        drawLine(rightOffset);
+                    }
+                }
             });
 
             // Draw horizontal cut lines
@@ -141,8 +157,25 @@ export function usePageGuides({
                     }
                 };
 
-                if (type === 'top' || type === 'both') drawLine(-guideWidthPx);
-                if (type === 'bottom' || type === 'both') drawLine(0);
+                const halfWidth = guideWidthPx / 2;
+                let offsetPx = 0;
+
+                if (type === 'top') {
+                    offsetPx = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+                    drawLine(offsetPx);
+                } else if (type === 'bottom') {
+                    offsetPx = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+                    drawLine(offsetPx);
+                } else if (type === 'both') {
+                    const topOffset = guidePlacement === 'outside' ? -halfWidth : guidePlacement === 'inside' ? halfWidth : 0;
+                    const bottomOffset = guidePlacement === 'outside' ? halfWidth : guidePlacement === 'inside' ? -halfWidth : 0;
+                    if (topOffset === bottomOffset) {
+                        drawLine(topOffset);
+                    } else {
+                        drawLine(topOffset);
+                        drawLine(bottomOffset);
+                    }
+                }
             });
         });
 
@@ -152,7 +185,7 @@ export function usePageGuides({
         if (app) {
             app.render();
         }
-    }, [isReady, container, app, pages, cards, cutLineStyle, guideWidth]);
+    }, [isReady, container, app, pages, cards, cutLineStyle, guidePlacement, guideWidth]);
 
     // Cleanup on unmount
     useEffect(() => {
